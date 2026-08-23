@@ -86,8 +86,9 @@ export default function Home() {
       <p className="hint">Paste a public PR URL to ingest its title, description, and diff—or paste a diff below.</p>
       <div className="grid form-grid">
         <label>What was the coding agent asked to build?<textarea value={task} onChange={(event) => { setTask(event.target.value); clearDemo(); }} placeholder="Example: Allow organization admins to export invoices as CSV." /></label>
-        <label>Paste pull-request diff<textarea className="diff" value={diff} onChange={(event) => { setDiff(event.target.value); clearDemo(); }} placeholder="Paste a GitHub PR diff here…" /></label>
+        <label className="diff-input-label"><span>Paste pull-request diff</span><div className="diff-input-shell"><div className="diff-toolbar"><span className="file-dot" /><strong>Files changed</strong><span className="toolbar-pill">unified diff</span></div><textarea className="diff" value={diff} onChange={(event) => { setDiff(event.target.value); clearDemo(); }} placeholder="Paste a GitHub PR diff here…" /></div></label>
       </div>
+      {diff && <DiffPreview diff={diff} />}
       <div className="contract-wrap"><div className="section-heading compact-heading"><span className="step">02</span><div><h2>Set the human boundary</h2><p>Turn team knowledge into an explicit review contract.</p></div></div><label className="contract-label">Review Contract <span>What must not change?</span><textarea className="contract" value={contract} onChange={(event) => { setContract(event.target.value); clearDemo(); }} placeholder="Example: Do not weaken tenant isolation or modify shared authorization behavior." /></label></div>
       <div className="actions"><button className="primary" disabled={loading || !task || !diff} onClick={analyze}>{loading ? "Verifying change…" : "Generate Merge Brief"}</button><button className="secondary" onClick={loadDemo}>Load risky demo PR</button><p className="hint">The demo works without a key. Live reviews use GROQ_API_KEY or OPENAI_API_KEY on the server.</p></div>
       {error && <p className="error">{error}</p>}
@@ -110,3 +111,12 @@ export default function Home() {
 function Card({ title, children, wide = false }: { title: string; children: React.ReactNode; wide?: boolean }) { return <article className={`card ${wide ? "wide" : ""}`}><h3>{title}</h3>{children}</article>; }
 function List({ items }: { items: string[] }) { return <ul>{items.map((item, index) => <li key={index}>{item}</li>)}</ul>; }
 function ListCard({ title, items }: { title: string; items: string[] }) { return <div><h3>{title}</h3><List items={items} /></div>; }
+
+function DiffPreview({ diff }: { diff: string }) {
+  const lines = diff.split("\n");
+  const visible = lines.slice(0, 22);
+  return <section className="github-preview"><div className="preview-head"><div><span className="eyebrow">GitHub-style preview</span><strong>Changed files</strong></div><span>{lines.length} patch lines</span></div><div className="diff-code">{visible.map((line, index) => {
+    const kind = line.startsWith("+") && !line.startsWith("+++") ? "addition" : line.startsWith("-") && !line.startsWith("---") ? "deletion" : line.startsWith("@@") ? "hunk" : line.startsWith("diff --git") ? "file-header" : "context";
+    return <div className={`diff-line ${kind}`} key={`${index}-${line}`}><span className="line-number">{index + 1}</span><span className="line-symbol">{kind === "addition" ? "+" : kind === "deletion" ? "−" : kind === "hunk" ? "@" : ""}</span><code>{line.replace(/^[-+]/, "")}</code></div>;
+  })}</div>{lines.length > visible.length && <p className="preview-more">+ {lines.length - visible.length} more patch lines are included in the review</p>}</section>;
+}
