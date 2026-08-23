@@ -39,12 +39,7 @@ export async function POST(request: Request) {
       apiKey: useGroq ? process.env.GROQ_API_KEY : process.env.OPENAI_API_KEY,
       ...(useGroq ? { baseURL: "https://api.groq.com/openai/v1" } : {}),
     });
-    const response = await client.responses.create({
-      model: useGroq ? "openai/gpt-oss-20b" : "gpt-5.4",
-      max_output_tokens: 1600,
-      truncation: "auto",
-      text: { format: { type: "json_schema", name: "pr_witness_review", strict: true, schema: reviewSchema } },
-      input: `You are PR Witness, an independent code-change verification agent. Determine whether a pull request fulfills the requested behavior without unexpected changes or unproven risk. Avoid style feedback. Report only concrete findings grounded in the supplied diff. A Review Contract contains human-defined non-negotiables. Treat a contract violation or unproven dangerous contract requirement as a reason for human sign-off.
+    const prompt = `You are PR Witness, an independent code-change verification agent. Determine whether a pull request fulfills the requested behavior without unexpected changes or unproven risk. Avoid style feedback. Report only concrete findings grounded in the supplied diff. A Review Contract contains human-defined non-negotiables. Treat a contract violation or unproven dangerous contract requirement as a reason for human sign-off.
 
 TASK:
 ${task}
@@ -53,7 +48,26 @@ REVIEW CONTRACT:
 ${contract || "No additional contract supplied. Preserve behavior outside the requested task."}
 
 PULL REQUEST DIFF:
-${diff}`,
+${diff}`;
+
+    if (useGroq) {
+      const response = await client.chat.completions.create({
+        model: "openai/gpt-oss-20b",
+        messages: [{ role: "system", content: prompt }],
+        max_completion_tokens: 1600,
+        response_format: { type: "json_schema", json_schema: { name: "pr_witness_review", strict: true, schema: reviewSchema } },
+      });
+      const output = response.choices[0]?.message?.content;
+      if (!output) return NextResponse.json({ error: "Groq returned no review. Try again or use the built-in demo." }, { status: 502 });
+      return NextResponse.json(JSON.parse(output));
+    }
+
+    const response = await client.responses.create({
+      model: "gpt-5.4",
+      max_output_tokens: 1600,
+      truncation: "auto",
+      text: { format: { type: "json_schema", name: "pr_witness_review", strict: true, schema: reviewSchema } },
+      input: prompt,
     });
 
     if (!response.output_text) return NextResponse.json({ error: "The model returned no review. Try a smaller pull request or use the built-in demo." }, { status: 502 });
