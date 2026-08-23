@@ -89,7 +89,7 @@ export default function Home() {
         <label>Paste pull-request diff<textarea className="diff" value={diff} onChange={(event) => { setDiff(event.target.value); clearDemo(); }} placeholder="Paste a GitHub PR diff here…" /></label>
       </div>
       <div className="contract-wrap"><div className="section-heading compact-heading"><span className="step">02</span><div><h2>Set the human boundary</h2><p>Turn team knowledge into an explicit review contract.</p></div></div><label className="contract-label">Review Contract <span>What must not change?</span><textarea className="contract" value={contract} onChange={(event) => { setContract(event.target.value); clearDemo(); }} placeholder="Example: Do not weaken tenant isolation or modify shared authorization behavior." /></label></div>
-      <div className="actions"><button className="primary" disabled={loading || !task || !diff} onClick={analyze}>{loading ? "Verifying change…" : "Generate Merge Brief"}</button><button className="secondary" onClick={loadDemo}>Load risky demo PR</button><p className="hint">The demo works without an API key. Live reviews use your server-side key.</p></div>
+      <div className="actions"><button className="primary" disabled={loading || !task || !diff} onClick={analyze}>{loading ? "Verifying change…" : "Generate Merge Brief"}</button><button className="secondary" onClick={loadDemo}>Load risky demo PR</button><p className="hint">The demo works without a key. Live reviews use GROQ_API_KEY or OPENAI_API_KEY on the server.</p></div>
       {error && <p className="error">{error}</p>}
     </section>
 

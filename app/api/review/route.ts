@@ -32,11 +32,15 @@ export async function POST(request: Request) {
     const { task, contract, diff, useDemo } = await request.json();
     if (useDemo) return NextResponse.json(demo);
     if (!task || !diff) return NextResponse.json({ error: "Add both the task and a pull-request diff." }, { status: 400 });
-    if (!process.env.OPENAI_API_KEY) return NextResponse.json({ error: "OPENAI_API_KEY is missing. Add it in Vercel → Settings → Environment Variables, then redeploy." }, { status: 400 });
+    const useGroq = Boolean(process.env.GROQ_API_KEY);
+    if (!useGroq && !process.env.OPENAI_API_KEY) return NextResponse.json({ error: "Add GROQ_API_KEY (recommended) or OPENAI_API_KEY in Vercel → Settings → Environment Variables, then redeploy." }, { status: 400 });
 
-    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const client = new OpenAI({
+      apiKey: useGroq ? process.env.GROQ_API_KEY : process.env.OPENAI_API_KEY,
+      ...(useGroq ? { baseURL: "https://api.groq.com/openai/v1" } : {}),
+    });
     const response = await client.responses.create({
-      model: "gpt-5.4",
+      model: useGroq ? "openai/gpt-oss-20b" : "gpt-5.4",
       max_output_tokens: 1600,
       truncation: "auto",
       text: { format: { type: "json_schema", name: "pr_witness_review", strict: true, schema: reviewSchema } },
