@@ -27,6 +27,48 @@ const demo = {
   verdict: { risk: "high", recommendation: "BLOCK", reason: "The export feature is present, but the PR weakens shared tenant isolation without proof it remains safe." },
 };
 
+type Review = typeof demo;
+
+/**
+ * Some OpenAI-compatible providers occasionally omit optional-looking fields
+ * even when a strict JSON schema is requested. Keep the UI contract stable:
+ * accept the useful review and supply safe empty values for missing sections.
+ */
+function normalizeReview(value: unknown): Review {
+  const review = (value && typeof value === "object" ? value : {}) as Partial<Review>;
+  const signoff = (review.humanSignoff && typeof review.humanSignoff === "object"
+    ? review.humanSignoff
+    : {}) as Partial<Review["humanSignoff"]>;
+  const verdict = (review.verdict && typeof review.verdict === "object"
+    ? review.verdict
+    : {}) as Partial<Review["verdict"]>;
+
+  return {
+    intent: typeof review.intent === "string" ? review.intent : "Review intent could not be determined from the supplied diff.",
+    actualChanges: Array.isArray(review.actualChanges) ? review.actualChanges : [],
+    scopeConcerns: Array.isArray(review.scopeConcerns) ? review.scopeConcerns : [],
+    blastRadius: Array.isArray(review.blastRadius) ? review.blastRadius : [],
+    missingProof: Array.isArray(review.missingProof) ? review.missingProof : [],
+    contractChecks: Array.isArray(review.contractChecks) ? review.contractChecks : [],
+    humanSignoff: {
+      required: typeof signoff.required === "boolean" ? signoff.required : true,
+      reasons: Array.isArray(signoff.reasons) ? signoff.reasons : ["The generated review was incomplete; a human must verify the change."],
+      approvals: Array.isArray(signoff.approvals) ? signoff.approvals : [],
+      evidence: Array.isArray(signoff.evidence) ? signoff.evidence : [],
+    },
+    verdict: {
+      risk: verdict.risk === "low" || verdict.risk === "medium" || verdict.risk === "high" ? verdict.risk : "medium",
+      recommendation: verdict.recommendation === "MERGE" || verdict.recommendation === "REVIEW" || verdict.recommendation === "BLOCK" ? verdict.recommendation : "REVIEW",
+      reason: typeof verdict.reason === "string" ? verdict.reason : "The review needs human verification.",
+    },
+  };
+}
+
+function parseJsonReview(output: string): Review {
+  const json = output.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  return normalizeReview(JSON.parse(json));
+}
+
 export async function POST(request: Request) {
   try {
     const { task, contract, diff, useDemo } = await request.json();
@@ -48,18 +90,22 @@ REVIEW CONTRACT:
 ${contract || "No additional contract supplied. Preserve behavior outside the requested task."}
 
 PULL REQUEST DIFF:
-${diff}`;
+${diff}
+
+Return one JSON object only. Include every field in this exact shape: intent, actualChanges, scopeConcerns, blastRadius, missingProof, contractChecks, humanSignoff, verdict. Use [] for no findings; do not omit any field.`;
 
     if (useGroq) {
       const response = await client.chat.completions.create({
         model: "openai/gpt-oss-20b",
         messages: [{ role: "system", content: prompt }],
         max_completion_tokens: 1600,
-        response_format: { type: "json_schema", json_schema: { name: "pr_witness_review", strict: true, schema: reviewSchema } },
+        // Groq can reject a response when its smaller model misses one strict
+        // schema field. Parse JSON ourselves and normalize missing fields below.
+        response_format: { type: "json_object" },
       });
       const output = response.choices[0]?.message?.content;
       if (!output) return NextResponse.json({ error: "Groq returned no review. Try again or use the built-in demo." }, { status: 502 });
-      return NextResponse.json(JSON.parse(output));
+      return NextResponse.json(parseJsonReview(output));
     }
 
     const response = await client.responses.create({
@@ -71,7 +117,7 @@ ${diff}`;
     });
 
     if (!response.output_text) return NextResponse.json({ error: "The model returned no review. Try a smaller pull request or use the built-in demo." }, { status: 502 });
-    return NextResponse.json(JSON.parse(response.output_text));
+    return NextResponse.json(parseJsonReview(response.output_text));
   } catch (error) {
     console.error(error);
     const message = error instanceof Error ? error.message : "Unknown error";
