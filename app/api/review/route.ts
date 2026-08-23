@@ -64,18 +64,56 @@ function normalizeReview(value: unknown): Review {
   };
 }
 
-function parseJsonReview(output: string): Review {
+function fallbackReview(task: string, contract: string, diff: string): Review {
+  const files = [...new Set([...diff.matchAll(/^diff --git a\/(.+?) b\//gm)].map((match) => match[1]))];
+  const sensitive = /auth|authoriz|permission|token|secret|credential|role|rbac|iam|security|deploy|production/i.test(`${task}\n${contract}\n${diff}`);
+  const requirements = contract.split("\n").map((line) => line.trim()).filter(Boolean);
+  const risk = sensitive ? "high" : "medium";
+
+  return normalizeReview({
+    intent: task,
+    actualChanges: files.map((file) => ({ file, summary: "Changed file requires human verification because the model returned an incomplete response.", relevance: "expected" })),
+    scopeConcerns: [{ severity: risk, finding: "The model did not return structured findings. This change must be reviewed against the contract by a human." }],
+    blastRadius: files.length ? files : ["The supplied pull-request diff"],
+    missingProof: ["The model response was incomplete, so no automated evidence can prove the contract is met."],
+    contractChecks: requirements.map((requirement) => ({ requirement, status: "unproven", evidence: "No structured model evidence was returned; verify this requirement manually." })),
+    humanSignoff: {
+      required: true,
+      reasons: ["The review model returned an incomplete response.", ...(sensitive ? ["This diff or contract touches a security, identity, or deployment boundary."] : [])],
+      approvals: [sensitive ? "Security or technical-owner approval." : "Technical-owner approval."],
+      evidence: ["Manual verification that every Review Contract requirement is met."],
+    },
+    verdict: {
+      risk,
+      recommendation: sensitive ? "BLOCK" : "REVIEW",
+      reason: "Automated analysis was incomplete, so this PR cannot be approved without human evidence.",
+    },
+  });
+}
+
+function parseJsonReview(output: string, task: string, contract: string, diff: string): Review {
   const clean = output.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   const start = clean.indexOf("{");
   const end = clean.lastIndexOf("}");
-  if (start === -1 || end === -1 || end < start) throw new Error("The model did not return a JSON review. Try again with a smaller diff.");
+  if (start === -1 || end === -1 || end < start) return fallbackReview(task, contract, diff);
   const json = clean.slice(start, end + 1);
-  return normalizeReview(JSON.parse(json));
+  try {
+    return normalizeReview(JSON.parse(json));
+  } catch {
+    return fallbackReview(task, contract, diff);
+  }
 }
 
 export async function POST(request: Request) {
+  let task = "";
+  let contract = "";
+  let diff = "";
   try {
-    const { task, contract, diff, useDemo } = await request.json();
+    const payload = await request.json();
+    task = typeof payload.task === "string" ? payload.task : "";
+    contract = typeof payload.contract === "string" ? payload.contract : "";
+    diff = typeof payload.diff === "string" ? payload.diff : "";
+    const useDemo = Boolean(payload.useDemo);
     if (useDemo) return NextResponse.json(demo);
     if (!task || !diff) return NextResponse.json({ error: "Add both the task and a pull-request diff." }, { status: 400 });
     const useGroq = Boolean(process.env.GROQ_API_KEY);
@@ -109,7 +147,7 @@ Return one JSON object only. Include every field in this exact shape: intent, ac
       });
       const output = response.choices[0]?.message?.content;
       if (!output) return NextResponse.json({ error: "Groq returned no review. Try again or use the built-in demo." }, { status: 502 });
-      return NextResponse.json(parseJsonReview(output));
+      return NextResponse.json(parseJsonReview(output, task, contract, diff));
     }
 
     const response = await client.responses.create({
@@ -121,10 +159,13 @@ Return one JSON object only. Include every field in this exact shape: intent, ac
     });
 
     if (!response.output_text) return NextResponse.json({ error: "The model returned no review. Try a smaller pull request or use the built-in demo." }, { status: 502 });
-    return NextResponse.json(parseJsonReview(response.output_text));
+    return NextResponse.json(parseJsonReview(response.output_text, task, contract, diff));
   } catch (error) {
     console.error(error);
     const message = error instanceof Error ? error.message : "Unknown error";
+    if (task && diff && /failed_generation|json/i.test(message)) {
+      return NextResponse.json(fallbackReview(task, contract, diff));
+    }
     return NextResponse.json({ error: `Review failed: ${message}` }, { status: 500 });
   }
 }
