@@ -65,7 +65,11 @@ function normalizeReview(value: unknown): Review {
 }
 
 function parseJsonReview(output: string): Review {
-  const json = output.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  const clean = output.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  const start = clean.indexOf("{");
+  const end = clean.lastIndexOf("}");
+  if (start === -1 || end === -1 || end < start) throw new Error("The model did not return a JSON review. Try again with a smaller diff.");
+  const json = clean.slice(start, end + 1);
   return normalizeReview(JSON.parse(json));
 }
 
@@ -99,9 +103,9 @@ Return one JSON object only. Include every field in this exact shape: intent, ac
         model: "openai/gpt-oss-20b",
         messages: [{ role: "system", content: prompt }],
         max_completion_tokens: 1600,
-        // Groq can reject a response when its smaller model misses one strict
-        // schema field. Parse JSON ourselves and normalize missing fields below.
-        response_format: { type: "json_object" },
+        // Do not use provider-enforced JSON here. On large diffs the Groq model
+        // can fail generation before it returns a response. The prompt requests
+        // JSON and parseJsonReview normalizes it safely below.
       });
       const output = response.choices[0]?.message?.content;
       if (!output) return NextResponse.json({ error: "Groq returned no review. Try again or use the built-in demo." }, { status: 502 });
